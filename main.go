@@ -267,27 +267,15 @@ func sender() {
 				index := strings.Index(value.Src, ",")
 				data, err := base64.StdEncoding.DecodeString(value.Src[index+1:])
 
-				filePath := fmt.Sprintf("./tmp/%d-%s", sendMessageRequest.ConversationID, value.Name)
-				tempFile, err := os.Create(filePath)
-				fileInfo, _ := tempFile.Stat()
-				failOnError(err, "Can`t create temp file")
-				_, err = tempFile.Write(data)
-				failOnError(err, "Can`t decode attachment file")
-
 				bodyBuf := &bytes.Buffer{}
 				bodyWriter := multipart.NewWriter(bodyBuf)
 
-				writer, err := bodyWriter.CreateFormFile("file", fileInfo.Name())
+				writer, err := bodyWriter.CreateFormFile("file", value.Name)
 
 				failOnError(err, "Can`t create form file")
-				_, err = io.Copy(writer, tempFile)
+				_, err = io.Copy(writer, bytes.NewReader(data))
 				failOnError(err, "Can`t copy form file")
 				bodyWriter.Close()
-				tempFile.Close()
-				//os.Remove(filePath)
-
-				bs := bodyBuf.Bytes()
-				fmt.Printf("%+v\n\n", string(bs))
 
 				purl := fmt.Sprintf("https://api.pact.im/p1/companies/%s/conversations/%d/messages/attachments", os.Getenv("PACT_COMPANY_ID"), sendMessageRequest.ConversationID)
 				req, err := http.NewRequest("POST", purl, bodyBuf)
@@ -305,7 +293,7 @@ func sender() {
 				err = json.NewDecoder(resp.Body).Decode(&fileUploadResponse)
 				failOnError(err, "Can`t decode file response")
 
-				log.Printf("Success %s %d", fileUploadResponse.Status, fileUploadResponse.Data.ExternalID)
+				log.Printf("Upload attachment: %s %d", fileUploadResponse.Status, fileUploadResponse.Data.ExternalID)
 
 				attachments = append(attachments, fileUploadResponse.Data.ExternalID)
 
@@ -331,7 +319,7 @@ func sender() {
 			failOnError(err, "Can`t send message request")
 			err = json.NewDecoder(resp.Body).Decode(&successSendMessage)
 			failOnError(err, "Can`t decode message response")
-			log.Printf("Success %s %d %s", successSendMessage.Status, successSendMessage.Data.ID, successSendMessage.Data.State)
+			log.Printf("Send messge: %s %d %s", successSendMessage.Status, successSendMessage.Data.ID, successSendMessage.Data.State)
 
 			resp.Body.Close()
 			d.Ack(false)
