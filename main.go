@@ -147,7 +147,7 @@ func identifier() {
 	msgs, err := AMQPChannel.Consume(
 		query.Name,
 		"",
-		true,
+		false,
 		false,
 		false,
 		false,
@@ -225,6 +225,7 @@ func identifier() {
 
 			log.Printf("Send fake callback: %s", fakeCallbackRequestJson)
 			resp.Body.Close()
+			d.Ack(false)
 		}
 	}()
 
