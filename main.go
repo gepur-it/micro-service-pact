@@ -102,21 +102,9 @@ func receiver(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Received a callback: %s", callbackRequestJson)
 
-	name := fmt.Sprintf("pact_receive_callback")
-
-	query, err := AMQPChannel.QueueDeclare(
-		name,
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	failOnError(err, "Failed to declare a queue")
-
 	err = AMQPChannel.Publish(
 		"",
-		query.Name,
+		"pact_receive_callback",
 		false,
 		false,
 		amqp.Publishing{
@@ -134,18 +122,8 @@ func receiver(w http.ResponseWriter, r *http.Request) {
 }
 
 func identifier() {
-	query, err := AMQPChannel.QueueDeclare(
-		"erp_send_identifier",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	failOnError(err, "Failed to declare a queue")
-
 	msgs, err := AMQPChannel.Consume(
-		query.Name,
+		"erp_send_identifier",
 		"",
 		false,
 		false,
@@ -197,21 +175,9 @@ func identifier() {
 			fakeCallbackRequestJson, err := json.Marshal(identifierCallbackRequest)
 			failOnError(err, "Can`t serialise webHook response")
 
-			name := fmt.Sprintf("pact_receive_callback")
-
-			query, err := AMQPChannel.QueueDeclare(
-				name,
-				true,
-				false,
-				false,
-				false,
-				nil,
-			)
-			failOnError(err, "Failed to declare a queue")
-
 			err = AMQPChannel.Publish(
 				"",
-				query.Name,
+				"pact_receive_callback",
 				false,
 				false,
 				amqp.Publishing{
@@ -233,18 +199,8 @@ func identifier() {
 }
 
 func sender() {
-	query, err := AMQPChannel.QueueDeclare(
-		"erp_send_message",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	failOnError(err, "Failed to declare a queue")
-
 	msgs, err := AMQPChannel.Consume(
-		query.Name,
+		"erp_send_message",
 		"",
 		false,
 		false,
