@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/joho/godotenv"
+	"github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
+	"github.com/zbindenren/logrus_mail"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 
 var AMQPConnection *amqp.Connection
 var AMQPChannel *amqp.Channel
+var logger = logrus.New()
 
 type callbackRequest struct {
 	Type  string                 `json:"type"`
@@ -86,9 +88,21 @@ type receiveIdentiferResponse struct {
 
 func failOnError(err error, msg string) {
 	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
-		panic(fmt.Sprintf("%s: %s", msg, err))
+		logger.WithFields(logrus.Fields{
+			"error": err,
+		}).Fatal(msg)
 	}
+}
+
+func getenvInt(key string) (int, error) {
+	s := os.Getenv(key)
+	v, err := strconv.Atoi(s)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return v, nil
 }
 
 func receiver(w http.ResponseWriter, r *http.Request) {
@@ -100,23 +114,13 @@ func receiver(w http.ResponseWriter, r *http.Request) {
 	callbackRequestJson, err := json.Marshal(callbackRequest)
 	failOnError(err, "Can`t serialise webHook response")
 
-	log.Printf("Received a callback: %s", callbackRequestJson)
-
-	name := fmt.Sprintf("pact_receive_callback")
-
-	query, err := AMQPChannel.QueueDeclare(
-		name,
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	failOnError(err, "Failed to declare a queue")
+	logger.WithFields(logrus.Fields{
+		"data": callbackRequestJson,
+	}).Info("Received a callback:")
 
 	err = AMQPChannel.Publish(
 		"",
-		query.Name,
+		"pact_receive_callback",
 		false,
 		false,
 		amqp.Publishing{
@@ -134,18 +138,8 @@ func receiver(w http.ResponseWriter, r *http.Request) {
 }
 
 func identifier() {
-	query, err := AMQPChannel.QueueDeclare(
-		"erp_send_identifier",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	failOnError(err, "Failed to declare a queue")
-
 	msgs, err := AMQPChannel.Consume(
-		query.Name,
+		"erp_send_identifier",
 		"",
 		false,
 		false,
@@ -163,8 +157,8 @@ func identifier() {
 			err := json.Unmarshal(d.Body, &sendIdentifierRequest)
 			failOnError(err, "Can`t decode sender callBack")
 
-			url := fmt.Sprintf("https://api.pact.im/p1/companies/%s/conversations/%d", os.Getenv("PACT_COMPANY_ID"), sendIdentifierRequest.ConversationId)
-			req, err := http.NewRequest("GET", url, nil)
+			identifierUrl := fmt.Sprintf("https://api.pact.im/p1/companies/%s/conversations/%d", os.Getenv("PACT_COMPANY_ID"), sendIdentifierRequest.ConversationId)
+			req, err := http.NewRequest("GET", identifierUrl, nil)
 			failOnError(err, "Can`t create identifier request")
 
 			req.Header.Set("X-Private-Api-Token", os.Getenv("PACT_API_KEY"))
@@ -172,16 +166,17 @@ func identifier() {
 			resp, err := http.DefaultClient.Do(req)
 			failOnError(err, "Can`t send identifier request")
 
-			log.Printf("Send a identifier request: %d", sendIdentifierRequest.ConversationId)
+			logger.WithFields(logrus.Fields{
+				"data": sendIdentifierRequest,
+			}).Info("Send a identifier request:")
 
 			receiveIdentiferResponse := receiveIdentiferResponse{}
 			json.NewDecoder(resp.Body).Decode(&receiveIdentiferResponse)
 			failOnError(err, "Can`t decode webHook callBack")
 
-			testCallbackRequestJson, err := json.Marshal(receiveIdentiferResponse)
-			failOnError(err, "Can`t serialise webHook response")
-
-			log.Printf("Received a response: %s", testCallbackRequestJson)
+			logger.WithFields(logrus.Fields{
+				"data": receiveIdentiferResponse,
+			}).Info("Received a identifier response:")
 
 			var inInterface map[string]interface{}
 			b, err := json.Marshal(receiveIdentiferResponse.Data.Conversation)
@@ -197,21 +192,9 @@ func identifier() {
 			fakeCallbackRequestJson, err := json.Marshal(identifierCallbackRequest)
 			failOnError(err, "Can`t serialise webHook response")
 
-			name := fmt.Sprintf("pact_receive_callback")
-
-			query, err := AMQPChannel.QueueDeclare(
-				name,
-				true,
-				false,
-				false,
-				false,
-				nil,
-			)
-			failOnError(err, "Failed to declare a queue")
-
 			err = AMQPChannel.Publish(
 				"",
-				query.Name,
+				"pact_receive_callback",
 				false,
 				false,
 				amqp.Publishing{
@@ -223,7 +206,10 @@ func identifier() {
 
 			failOnError(err, "Failed to publish a message")
 
-			log.Printf("Send fake callback: %s", fakeCallbackRequestJson)
+			logger.WithFields(logrus.Fields{
+				"data": fakeCallbackRequestJson,
+			}).Info("Send fake identifier callback:")
+
 			resp.Body.Close()
 			d.Ack(false)
 		}
@@ -233,18 +219,8 @@ func identifier() {
 }
 
 func sender() {
-	query, err := AMQPChannel.QueueDeclare(
-		"erp_send_message",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	failOnError(err, "Failed to declare a queue")
-
 	msgs, err := AMQPChannel.Consume(
-		query.Name,
+		"erp_send_message",
 		"",
 		false,
 		false,
@@ -294,7 +270,9 @@ func sender() {
 				err = json.NewDecoder(resp.Body).Decode(&fileUploadResponse)
 				failOnError(err, "Can`t decode file response")
 
-				log.Printf("Upload attachment: %s %d", fileUploadResponse.Status, fileUploadResponse.Data.ExternalID)
+				logger.WithFields(logrus.Fields{
+					"data": fileUploadResponse,
+				}).Info("Upload attachment:")
 
 				attachments = append(attachments, fileUploadResponse.Data.ExternalID)
 
@@ -320,7 +298,10 @@ func sender() {
 			failOnError(err, "Can`t send message request")
 			err = json.NewDecoder(resp.Body).Decode(&successSendMessage)
 			failOnError(err, "Can`t decode message response")
-			log.Printf("Send messge: %s %d %s", successSendMessage.Status, successSendMessage.Data.ID, successSendMessage.Data.State)
+
+			logger.WithFields(logrus.Fields{
+				"data": successSendMessage,
+			}).Info("Send message: ")
 
 			resp.Body.Close()
 			d.Ack(false)
@@ -333,6 +314,28 @@ func sender() {
 func init() {
 	err := godotenv.Load()
 	failOnError(err, "Error loading .env file")
+
+	port, err := getenvInt("LOGTOEMAIL_SMTP_PORT")
+
+	if err != nil {
+		panic(fmt.Sprintf("%s: %s", "Error read smtp port from env", err))
+	}
+
+	hook, err := logrus_mail.NewMailAuthHook(
+		os.Getenv("LOGTOEMAIL_APP_NAME"),
+		os.Getenv("LOGTOEMAIL_SMTP_HOST"),
+		port,
+		os.Getenv("LOGTOEMAIL_SMTP_FROM"),
+		os.Getenv("LOGTOEMAIL_SMTP_TO"),
+		os.Getenv("LOGTOEMAIL_SMTP_USERNAME"),
+		os.Getenv("LOGTOEMAIL_SMTP_PASSWORD"),
+	)
+
+	logger.SetLevel(logrus.DebugLevel)
+	logger.SetOutput(os.Stdout)
+	logger.SetFormatter(&logrus.TextFormatter{})
+
+	logger.Hooks.Add(hook)
 
 	cs := fmt.Sprintf("amqp://%s:%s@%s:%s/%s",
 		os.Getenv("RABBITMQ_ERP_LOGIN"),
@@ -351,15 +354,18 @@ func init() {
 	AMQPChannel = channel
 
 	failOnError(err, "Failed to declare a queue")
+	logger.WithFields(logrus.Fields{}).Info("Server init:")
 }
 
 func main() {
+	logger.WithFields(logrus.Fields{}).Info("Server starting:")
 	http.HandleFunc("/", receiver)
 
 	go sender()
 	go identifier()
 
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", os.Getenv("PACT_LISTEN_PORT")), nil))
+	logger.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", os.Getenv("PACT_LISTEN_PORT")), nil))
 	defer AMQPConnection.Close()
 	defer AMQPChannel.Close()
+	logger.WithFields(logrus.Fields{}).Info("Server stopped:")
 }
